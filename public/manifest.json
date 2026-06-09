@@ -1,0 +1,29 @@
+{
+  "name": "WangKu — Pengurusan Kewangan",
+  "short_name": "WangKu",
+  "description": "App pengurusan kewangan peribadi dengan simpanan resit dan bukti transaksi",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0F0F13",
+  "theme_color": "#7C6AF7",
+  "categories": ["finance", "productivity"],
+  "lang": "ms",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [],
+  "related_applications": []
+}
