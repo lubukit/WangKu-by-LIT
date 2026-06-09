@@ -13,7 +13,7 @@ WangKu ialah app pengurusan kewangan peribadi berbentuk PWA. Ia boleh di-host se
 - Bahasa Malay/English
 - PWA Add to Home Screen
 - Firebase Firestore untuk database
-- Firebase Storage untuk gambar resit/bukti
+- Cloudinary untuk gambar resit/bukti
 - Personal Mode dengan Anonymous Auth
 - Sync Account dengan Email/Password Auth
 
@@ -40,7 +40,21 @@ Dalam Firebase Console:
 3. Copy Firebase config.
 4. Authentication -> Sign-in method -> enable **Anonymous** dan **Email/Password**.
 5. Firestore Database -> Create database.
-6. Storage -> Get started.
+
+Firebase Storage tidak wajib. Jika Storage minta upgrade plan, guna Cloudinary untuk gambar resit.
+
+## Setup Cloudinary untuk Gambar Resit
+
+Dalam Cloudinary:
+
+1. Settings -> Upload -> Upload presets.
+2. Add Upload Preset.
+3. Set `Signing mode` kepada **Unsigned**.
+4. Isi `Upload preset name` sebagai `wangku_receipts`.
+5. Isi `Asset folder` sebagai `wangku_receipts`.
+6. Save.
+
+Ambil nilai `Cloud name` dari dashboard Cloudinary. Jangan kongsi `API Secret`.
 
 ## Environment Variables
 
@@ -59,6 +73,8 @@ REACT_APP_FIREBASE_PROJECT_ID=...
 REACT_APP_FIREBASE_STORAGE_BUCKET=...
 REACT_APP_FIREBASE_MESSAGING_SENDER_ID=...
 REACT_APP_FIREBASE_APP_ID=...
+REACT_APP_CLOUDINARY_CLOUD_NAME=...
+REACT_APP_CLOUDINARY_UPLOAD_PRESET=wangku_receipts
 ```
 
 Jika semua value lengkap, app akan auto aktifkan Firebase. Jika belum lengkap, app fallback ke localStorage supaya website masih boleh digunakan.
@@ -78,6 +94,8 @@ REACT_APP_FIREBASE_PROJECT_ID
 REACT_APP_FIREBASE_STORAGE_BUCKET
 REACT_APP_FIREBASE_MESSAGING_SENDER_ID
 REACT_APP_FIREBASE_APP_ID
+REACT_APP_CLOUDINARY_CLOUD_NAME
+REACT_APP_CLOUDINARY_UPLOAD_PRESET
 FIREBASE_SERVICE_ACCOUNT
 ```
 
@@ -88,7 +106,7 @@ FIREBASE_SERVICE_ACCOUNT
 Selepas GitHub Action siap, setiap push ke branch `main` akan auto:
 
 ```bash
-npm ci
+npm install
 npm run build
 firebase deploy
 ```
@@ -109,8 +127,9 @@ Aliran resit sekarang:
 
 1. Ambil gambar atau upload resit.
 2. Isi merchant, jumlah, tarikh, kategori dan akaun.
-3. Simpan sebagai transaksi.
-4. Jika Firebase sudah aktif, gambar bukti akan disimpan ke Firebase Storage.
+3. App compress gambar supaya masih jelas tetapi lebih kecil.
+4. Simpan sebagai transaksi.
+5. Jika Cloudinary sudah aktif, gambar bukti akan disimpan ke Cloudinary dan Firestore simpan URL gambar.
 
 ## Firebase Rules
 

@@ -22,6 +22,11 @@ const firebaseApp = IS_FIREBASE_ENABLED ? initializeApp(FIREBASE_CONFIG) : null;
 const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null;
 const firebaseDb = firebaseApp ? getFirestore(firebaseApp) : null;
 const firebaseStorage = firebaseApp ? getStorage(firebaseApp) : null;
+const CLOUDINARY_CONFIG = {
+  cloudName: process.env.REACT_APP_CLOUDINARY_CLOUD_NAME,
+  uploadPreset: process.env.REACT_APP_CLOUDINARY_UPLOAD_PRESET,
+};
+const IS_CLOUDINARY_ENABLED = Object.values(CLOUDINARY_CONFIG).every(isFilled);
 
 // ─────────────────────────────────────────────────────────
 const PALETTES = {
@@ -209,9 +214,77 @@ const store = {
 const isDataUrl = (value) => typeof value === "string" && value.startsWith("data:image/");
 const shortId = () => Math.random().toString(36).slice(2, 10);
 
+function dataUrlToBlob(dataUrl) {
+  const [header, encoded] = dataUrl.split(",");
+  const mime = header.match(/data:(.*?);base64/)?.[1] || "image/jpeg";
+  const binary = atob(encoded || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = () => reject(new Error("Gagal baca gambar"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressReceiptImage(file) {
+  const original = await readFileAsDataUrl(file);
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const maxSide = 1600;
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const width = Math.max(1, Math.round(img.width * scale));
+      const height = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      const compressed = canvas.toDataURL("image/jpeg", 0.82);
+      resolve(compressed.length < original.length ? compressed : original);
+    };
+    img.onerror = () => resolve(original);
+    img.src = original;
+  });
+}
+
+async function uploadCloudinaryImage(imageData, folder) {
+  if (!IS_CLOUDINARY_ENABLED || !isDataUrl(imageData)) return null;
+  const form = new FormData();
+  form.append("file", dataUrlToBlob(imageData), `${folder}-${Date.now()}-${shortId()}.jpg`);
+  form.append("upload_preset", CLOUDINARY_CONFIG.uploadPreset);
+  form.append("folder", folder);
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/image/upload`, {
+    method: "POST",
+    body: form,
+  });
+  const json = await res.json();
+  if (!res.ok || !json.secure_url) throw new Error(json.error?.message || "Cloudinary upload gagal");
+  return json.secure_url;
+}
+
 async function uploadCloudImage(uid, folder, imageData, cache) {
-  if (!IS_FIREBASE_ENABLED || !firebaseStorage || !uid || !isDataUrl(imageData)) return imageData || null;
+  if (!isDataUrl(imageData)) return imageData || null;
   if (cache.has(imageData)) return cache.get(imageData);
+  try {
+    const url = await uploadCloudinaryImage(imageData, folder);
+    if (url) {
+      cache.set(imageData, url);
+      return url;
+    }
+  } catch {}
+  if (!IS_FIREBASE_ENABLED || !firebaseStorage || !uid) {
+    cache.set(imageData, null);
+    return null;
+  }
   try {
     const storageRef = ref(firebaseStorage, `users/${uid}/${folder}/${Date.now()}-${shortId()}.jpg`);
     await uploadString(storageRef, imageData, "data_url");
@@ -1213,11 +1286,19 @@ function ReceiptScanner({ setTransactions, categories, profile, scannedReceipts,
   const [selectedReceipt, setSelectedReceipt] = useState(null);
   const fileRef = useRef(); const cameraRef = useRef();
 
-  const handleFile = (file) => {
+  const handleFile = async (file) => {
     if (!file) return;
-    const r = new FileReader();
-    r.onload = e => { setImageData(e.target.result); setStep("preview"); setError(null); setScanResult(null); };
-    r.readAsDataURL(file);
+    setStep("scanning");
+    setError(null);
+    setScanResult(null);
+    try {
+      const compressed = await compressReceiptImage(file);
+      setImageData(compressed);
+      setStep("preview");
+    } catch {
+      setError("Gambar gagal diproses. Cuba pilih gambar lain.");
+      setStep("idle");
+    }
   };
 
   const openReceiptForm = () => {
