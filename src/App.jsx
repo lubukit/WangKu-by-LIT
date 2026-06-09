@@ -274,16 +274,18 @@ async function uploadCloudinaryImage(imageData, folder) {
 async function uploadCloudImage(uid, folder, imageData, cache) {
   if (!isDataUrl(imageData)) return imageData || null;
   if (cache.has(imageData)) return cache.get(imageData);
+  const errors = [];
   try {
     const url = await uploadCloudinaryImage(imageData, folder);
     if (url) {
       cache.set(imageData, url);
       return url;
     }
-  } catch {}
+  } catch (err) {
+    errors.push(err.message);
+  }
   if (!IS_FIREBASE_ENABLED || !firebaseStorage || !uid) {
-    cache.set(imageData, null);
-    return null;
+    throw new Error(errors[0] || "Cloudinary belum siap. Tambah GitHub secrets Cloudinary dan deploy semula.");
   }
   try {
     const storageRef = ref(firebaseStorage, `users/${uid}/${folder}/${Date.now()}-${shortId()}.jpg`);
@@ -291,9 +293,8 @@ async function uploadCloudImage(uid, folder, imageData, cache) {
     const url = await getDownloadURL(storageRef);
     cache.set(imageData, url);
     return url;
-  } catch {
-    cache.set(imageData, null);
-    return null;
+  } catch (err) {
+    throw new Error(errors[0] || err.message || "Upload gambar gagal");
   }
 }
 
@@ -317,6 +318,42 @@ async function prepareCloudData(uid, data, cache) {
   })));
   next.updatedAt = new Date().toISOString();
   return next;
+}
+
+function mergeByIdKeepLocalImages(cloudItems = [], localItems = [], imageKey) {
+  const merged = new Map();
+  cloudItems.forEach(item => merged.set(item.id, item));
+  localItems.forEach(item => {
+    const cloud = merged.get(item.id);
+    if (!cloud) {
+      merged.set(item.id, item);
+      return;
+    }
+    const localImage = item?.[imageKey];
+    const cloudImage = cloud?.[imageKey];
+    merged.set(item.id, {
+      ...cloud,
+      [imageKey]: cloudImage || localImage || null,
+    });
+  });
+  return Array.from(merged.values()).sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+}
+
+function mergeGoalsKeepLocalImages(cloudGoals = [], localGoals = []) {
+  const localById = new Map(localGoals.map(goal => [goal.id, goal]));
+  const cloudIds = new Set(cloudGoals.map(goal => goal.id));
+  const mergedGoals = cloudGoals.map(goal => {
+    const localGoal = localById.get(goal.id);
+    if (!localGoal) return goal;
+    return {
+      ...goal,
+      contributions: mergeByIdKeepLocalImages(goal.contributions || [], localGoal.contributions || [], "proofImage"),
+    };
+  });
+  localGoals.forEach(goal => {
+    if (!cloudIds.has(goal.id)) mergedGoals.push(goal);
+  });
+  return mergedGoals;
 }
 
 // ── Shared UI ─────────────────────────────────────────────
@@ -1123,11 +1160,10 @@ function Goals({ goals, setGoals, profile }) {
     setPendingContribution(null);
   };
 
-  const handleProofFile = (file) => {
+  const handleProofFile = async (file) => {
     if (!file || !pendingContribution) return;
-    const reader = new FileReader();
-    reader.onload = e => completeContribution(e.target.result);
-    reader.readAsDataURL(file);
+    const image = await compressReceiptImage(file);
+    completeContribution(image);
   };
 
   return (
@@ -1680,8 +1716,13 @@ export default function App() {
   const [cloudStatus, setCloudStatus] = useState(IS_FIREBASE_ENABLED ? "Menyambung Firebase..." : "Mode Offline");
   const imageUploadCache = useRef(new Map());
   const applyingCloudData = useRef(false);
+  const latestData = useRef({ setup, prefs, profile, categories, transactions, goals, bills, scannedReceipts });
   C = PALETTES[prefs.theme] || PALETTES.dark;
   LANG = prefs.language || "ms";
+
+  useEffect(() => {
+    latestData.current = { setup, prefs, profile, categories, transactions, goals, bills, scannedReceipts };
+  }, [setup, prefs, profile, categories, transactions, goals, bills, scannedReceipts]);
 
   useEffect(() => {
     if (!IS_FIREBASE_ENABLED || !firebaseAuth) return;
@@ -1735,13 +1776,14 @@ export default function App() {
       try {
         if (snap.exists()) {
           const data = snap.data();
+          const local = latestData.current;
           setPrefs({ ...DEFAULT_PREFS, ...(data.prefs || {}) });
           setProfile({ ...DEFAULT_PROFILE, ...(data.profile || {}) });
           setCategories(data.categories?.length ? data.categories : DEFAULT_CATEGORIES);
-          setTransactions(data.transactions || []);
-          setGoals(data.goals || []);
+          setTransactions(mergeByIdKeepLocalImages(data.transactions || [], local.transactions || [], "receiptImage"));
+          setGoals(mergeGoalsKeepLocalImages(data.goals || [], local.goals || []));
           setBills(data.bills || []);
-          setScannedReceipts(data.scannedReceipts || []);
+          setScannedReceipts(mergeByIdKeepLocalImages(data.scannedReceipts || [], local.scannedReceipts || [], "imageData"));
           if (data.setupDone !== undefined) setSetup(Boolean(data.setupDone));
         }
         setCloudLoaded(true);
@@ -1774,6 +1816,11 @@ export default function App() {
           scannedReceipts,
         }, imageUploadCache.current);
         await setDoc(doc(firebaseDb, "users", cloudUser.uid, "wangku", "main"), data, { merge: true });
+        applyingCloudData.current = true;
+        setTransactions(data.transactions || []);
+        setGoals(data.goals || []);
+        setScannedReceipts(data.scannedReceipts || []);
+        setTimeout(() => { applyingCloudData.current = false; }, 300);
         setCloudStatus("Firebase synced");
       } catch (err) {
         setCloudLoaded(true);

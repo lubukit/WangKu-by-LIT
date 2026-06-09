@@ -1,5 +1,5 @@
 /* WangKu Service Worker — Offline Support */
-const CACHE_NAME = "wangku-v3";
+const CACHE_NAME = "wangku-v4";
 const BASE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, "");
 const withBase = path => `${BASE_PATH}${path}`;
 const STATIC_ASSETS = [
