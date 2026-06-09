@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { doc, getDoc, getFirestore, setDoc } from "firebase/firestore";
+import { doc, getFirestore, onSnapshot, setDoc } from "firebase/firestore";
 import { getDownloadURL, getStorage, ref, uploadString } from "firebase/storage";
 
 // ─────────────────────────────────────────────────────────
@@ -232,6 +232,7 @@ async function prepareCloudData(uid, data, cache) {
   })));
   next.scannedReceipts = await Promise.all((next.scannedReceipts || []).map(async r => ({
     ...r,
+    items: Array.isArray(r.items) ? r.items.join(", ") : (r.items || ""),
     imageData: await uploadCloudImage(uid, "receipt-scans", r.imageData, cache),
   })));
   next.goals = await Promise.all((next.goals || []).map(async g => ({
@@ -667,9 +668,9 @@ function Settings({ profile, setProfile, categories, setCategories, bills, setBi
             <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, lineHeight: 1.5 }}>
               {IS_FIREBASE_ENABLED ? "Firebase aktif — data disimpan ke Firestore dan gambar bukti ke Storage." : "Firebase belum dikonfigurasi. Data disimpan secara tempatan (localStorage)."}
             </div>
-            <div style={{ background: IS_FIREBASE_ENABLED ? C.green + "11" : C.yellow + "11", border: `1px solid ${IS_FIREBASE_ENABLED ? C.green : C.yellow}44`, borderRadius: 10, padding: 10 }}>
-              <div style={{ fontSize: 12, color: IS_FIREBASE_ENABLED ? C.green : C.yellow }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><AppIcon name={IS_FIREBASE_ENABLED ? "check" : "alert"} size={14} /> {IS_FIREBASE_ENABLED ? cloudStatus : "Mode Offline — isi .env Firebase dahulu"}</span>
+            <div style={{ background: (cloudStatus || "").includes("gagal") ? C.red + "11" : IS_FIREBASE_ENABLED ? C.green + "11" : C.yellow + "11", border: `1px solid ${(cloudStatus || "").includes("gagal") ? C.red : IS_FIREBASE_ENABLED ? C.green : C.yellow}44`, borderRadius: 10, padding: 10 }}>
+              <div style={{ fontSize: 12, color: (cloudStatus || "").includes("gagal") ? C.red : IS_FIREBASE_ENABLED ? C.green : C.yellow }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><AppIcon name={(cloudStatus || "").includes("gagal") ? "alert" : IS_FIREBASE_ENABLED ? "check" : "alert"} size={14} /> {IS_FIREBASE_ENABLED ? cloudStatus : "Mode Offline — isi .env Firebase dahulu"}</span>
               </div>
             </div>
             {IS_FIREBASE_ENABLED && (
@@ -1597,6 +1598,7 @@ export default function App() {
   const [cloudLoaded, setCloudLoaded] = useState(!IS_FIREBASE_ENABLED);
   const [cloudStatus, setCloudStatus] = useState(IS_FIREBASE_ENABLED ? "Menyambung Firebase..." : "Mode Offline");
   const imageUploadCache = useRef(new Map());
+  const applyingCloudData = useRef(false);
   C = PALETTES[prefs.theme] || PALETTES.dark;
   LANG = prefs.language || "ms";
 
@@ -1644,12 +1646,12 @@ export default function App() {
 
   useEffect(() => {
     if (!IS_FIREBASE_ENABLED || !firebaseDb || !cloudUser) return;
-    let cancelled = false;
-    const loadCloudData = async () => {
+    setCloudLoaded(false);
+    setCloudStatus("Memuat data Firebase...");
+    const refDoc = doc(firebaseDb, "users", cloudUser.uid, "wangku", "main");
+    const unsub = onSnapshot(refDoc, snap => {
+      applyingCloudData.current = true;
       try {
-        const refDoc = doc(firebaseDb, "users", cloudUser.uid, "wangku", "main");
-        const snap = await getDoc(refDoc);
-        if (cancelled) return;
         if (snap.exists()) {
           const data = snap.data();
           setPrefs({ ...DEFAULT_PREFS, ...(data.prefs || {}) });
@@ -1663,27 +1665,21 @@ export default function App() {
         }
         setCloudLoaded(true);
         setCloudStatus(snap.exists() ? "Firebase synced" : "Akaun sync baru — lengkapkan setup dahulu");
-      } catch (err) {
-        setCloudLoaded(true);
-        setCloudStatus(`Firebase load gagal: ${err.message}`);
+      } finally {
+        setTimeout(() => { applyingCloudData.current = false; }, 300);
       }
-    };
-    loadCloudData();
-    return () => { cancelled = true; };
+    }, err => {
+      applyingCloudData.current = false;
+      setCloudLoaded(true);
+      setCloudStatus(`Firebase load gagal: ${err.message}`);
+    });
+    return () => unsub();
   }, [cloudUser]);
 
-  // Auto-save everything to localStorage
-  useEffect(() => { store.set("prefs", prefs); }, [prefs]);
-  useEffect(() => { store.set("profile", profile); }, [profile]);
-  useEffect(() => { store.set("categories", categories); }, [categories]);
-  useEffect(() => { store.set("transactions", transactions); }, [transactions]);
-  useEffect(() => { store.set("goals", goals); }, [goals]);
-  useEffect(() => { store.set("bills", bills); }, [bills]);
-  useEffect(() => { store.set("scanned_receipts", scannedReceipts); }, [scannedReceipts]);
-
   useEffect(() => {
-    if (!IS_FIREBASE_ENABLED || !firebaseDb || !cloudUser || !cloudLoaded) return;
+    if (!IS_FIREBASE_ENABLED || !firebaseDb || !cloudUser || !cloudLoaded || applyingCloudData.current) return;
     const timer = setTimeout(async () => {
+      if (applyingCloudData.current) return;
       try {
         setCloudStatus("Menyimpan ke Firebase...");
         const data = await prepareCloudData(cloudUser.uid, {
@@ -1699,11 +1695,21 @@ export default function App() {
         await setDoc(doc(firebaseDb, "users", cloudUser.uid, "wangku", "main"), data, { merge: true });
         setCloudStatus("Firebase synced");
       } catch (err) {
+        setCloudLoaded(true);
         setCloudStatus(`Firebase save gagal: ${err.message}`);
       }
     }, 900);
     return () => clearTimeout(timer);
   }, [setup, prefs, profile, categories, transactions, goals, bills, scannedReceipts, cloudUser, cloudLoaded]);
+
+  // Auto-save everything to localStorage
+  useEffect(() => { store.set("prefs", prefs); }, [prefs]);
+  useEffect(() => { store.set("profile", profile); }, [profile]);
+  useEffect(() => { store.set("categories", categories); }, [categories]);
+  useEffect(() => { store.set("transactions", transactions); }, [transactions]);
+  useEffect(() => { store.set("goals", goals); }, [goals]);
+  useEffect(() => { store.set("bills", bills); }, [bills]);
+  useEffect(() => { store.set("scanned_receipts", scannedReceipts); }, [scannedReceipts]);
 
   const handleSetupDone = (p, cats) => {
     setProfile(p); setCategories(cats);
