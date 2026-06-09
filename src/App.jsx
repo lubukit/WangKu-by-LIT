@@ -212,11 +212,16 @@ const shortId = () => Math.random().toString(36).slice(2, 10);
 async function uploadCloudImage(uid, folder, imageData, cache) {
   if (!IS_FIREBASE_ENABLED || !firebaseStorage || !uid || !isDataUrl(imageData)) return imageData || null;
   if (cache.has(imageData)) return cache.get(imageData);
-  const storageRef = ref(firebaseStorage, `users/${uid}/${folder}/${Date.now()}-${shortId()}.jpg`);
-  await uploadString(storageRef, imageData, "data_url");
-  const url = await getDownloadURL(storageRef);
-  cache.set(imageData, url);
-  return url;
+  try {
+    const storageRef = ref(firebaseStorage, `users/${uid}/${folder}/${Date.now()}-${shortId()}.jpg`);
+    await uploadString(storageRef, imageData, "data_url");
+    const url = await getDownloadURL(storageRef);
+    cache.set(imageData, url);
+    return url;
+  } catch {
+    cache.set(imageData, null);
+    return null;
+  }
 }
 
 async function prepareCloudData(uid, data, cache) {
