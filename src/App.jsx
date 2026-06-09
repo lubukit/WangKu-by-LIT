@@ -1501,6 +1501,18 @@ const NAV = [
   { id: "reports", icon: "chart", labelKey: "reports" },
 ];
 
+function authErrorMessage(err) {
+  const code = err?.code || "";
+  if (code === "auth/email-already-in-use") return "Email ini sudah didaftarkan. Tekan Login untuk masuk.";
+  if (code === "auth/invalid-email") return "Format email tidak sah.";
+  if (code === "auth/weak-password") return "Password terlalu lemah. Guna minimum 6 aksara.";
+  if (code === "auth/user-not-found") return "Akaun belum didaftarkan. Tekan Create untuk buat akaun baru.";
+  if (code === "auth/wrong-password") return "Password salah. Cuba semula.";
+  if (code === "auth/invalid-credential") return "Akaun belum didaftarkan atau password salah. Tekan Create jika ini akaun baru.";
+  if (code === "auth/network-request-failed") return "Masalah internet. Cuba semula.";
+  return err?.message || "Gagal masuk akaun";
+}
+
 function AuthGate({ onPersonal, onEmailAuth, cloudStatus }) {
   const [mode, setMode] = useState("choice");
   const [email, setEmail] = useState("");
@@ -1512,7 +1524,7 @@ function AuthGate({ onPersonal, onEmailAuth, cloudStatus }) {
     try {
       await onEmailAuth(type, email.trim(), password);
     } catch (err) {
-      setError(err.message || "Gagal masuk akaun");
+      setError(authErrorMessage(err));
     }
   };
 
@@ -1544,7 +1556,7 @@ function AuthGate({ onPersonal, onEmailAuth, cloudStatus }) {
                 <IconBubble name="globe" color={C.green} box={44} size={22} />
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 900 }}>Sync Account</div>
-                  <div style={{ fontSize: 12, color: C.muted }}>Login email supaya data boleh dibuka di device lain.</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>Login akaun sedia ada, atau Create jika belum pernah daftar.</div>
                 </div>
               </div>
               <Btn onClick={() => setMode("login")} variant="secondary">Login / Create Account</Btn>
@@ -1608,11 +1620,18 @@ export default function App() {
   const handleEmailAuth = async (type, email, password) => {
     if (!firebaseAuth) throw new Error("Firebase belum dikonfigurasi");
     if (!email || password.length < 6) throw new Error("Masukkan email dan password minimum 6 aksara");
-    store.set("auth_choice", "sync");
-    setAuthChoice("sync");
     setCloudStatus(type === "signup" ? "Membuat akaun..." : "Login...");
-    if (type === "signup") await createUserWithEmailAndPassword(firebaseAuth, email, password);
-    else await signInWithEmailAndPassword(firebaseAuth, email, password);
+    try {
+      if (type === "signup") await createUserWithEmailAndPassword(firebaseAuth, email, password);
+      else await signInWithEmailAndPassword(firebaseAuth, email, password);
+      store.set("auth_choice", "sync");
+      setAuthChoice("sync");
+    } catch (err) {
+      store.set("auth_choice", "");
+      setAuthChoice("");
+      setCloudStatus("Login diperlukan");
+      throw err;
+    }
   };
 
   const handleSwitchAccount = async () => {
@@ -1643,7 +1662,7 @@ export default function App() {
           if (data.setupDone !== undefined) setSetup(Boolean(data.setupDone));
         }
         setCloudLoaded(true);
-        setCloudStatus(snap.exists() ? "Firebase synced" : "Firebase ready");
+        setCloudStatus(snap.exists() ? "Firebase synced" : "Akaun sync baru — lengkapkan setup dahulu");
       } catch (err) {
         setCloudLoaded(true);
         setCloudStatus(`Firebase load gagal: ${err.message}`);
